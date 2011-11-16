@@ -1,0 +1,20 @@
+Markov Chain Language Models
+
+Estimated Deadline: 12/5/11
+
+Team:
+Lizzie Silver
+Jason Capehart, jasontc2@yahoo.com
+Alexander Murray-Watters
+
+
+Project Description:
+
+
+
+A simple statistical model of language is
+that words follow a Markov chain, with the next word being independent
+of earlier words given the latest word. You will write code to t this model
+to a collection of documents, to simulate new text from it, and to compare
+it to a second-order Markov chain, where the next word is independent of
+earlier words given the latest two words.

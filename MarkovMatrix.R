@@ -1,10 +1,88 @@
 # Markov Language Model
 
+# Markov Matrix Generator
+# Input: states.vec - a vector of observed states
+#        order - the desired order of Markov Model (i.e. how many previous states the process depends on)
+# Output: (1) A markov matrix for the input sequence
+#         (2) A lookup table of possible states
+#         (3) A lookup table of transition states
+# Required: possible.states(), actual.states()
+
+mm.generator <- function(states.vec, order) {
+  
+  
+}
+
+# Actual States
+# Input: states.vec - a vector of observed states
+#        order - the desired order of Markov Model
+# Output: state.trans.freq - the frequency of all state transitions
+# Calls: ngram()
+
+actual.states <- function(states.vec, order) {
+  # (1) Observed States
+  state.seq <- ngram(states.vec, order)
+  # (2) Frequency of those States
+  return(table(state.seq$Seq))
+}
+
+# Ngram function
+# Input: states.vec
+#        order - size of n-gram is equal to Markov Model order plus 1
+# Output: N gram data frame specifying the position of each state and the concatenated state sequence
+# Required: foreach() package
+# Called By: actual.states()
+
+ngram <- function(states.vec, order) {
+  
+  n <- order + 1 # the length of the n-gram is 1 greater than the order
+  obs <- length(states.vec) # Number of observations
+  # Preallocate matrix
+  state.seq.matrix <- matrix(data=0, nrow=obs-order, ncol=n)
+  colname.vec <- NULL # Initialize vector for column names
+  
+  # Set up each state sequence by manipulating the indices of the original "states.vec"
+  for (i in 1:n) {
+    state.i <- states.vec[i:(obs-(n-i))] # From first possible start point (i) to last possible end point obs-(n-i)
+    state.seq.matrix[, i] <- state.i #Overwrite the appropriate column
+    # Make a sequence of names for higher order Markov Models
+    name.i <- paste("State", i, sep='')
+    colname.vec <- c(colname.vec, name.i)
+  }
+  # Convert the matrix to a data frame to handle the strings
+  state.seq.df <- as.data.frame(state.seq.matrix, stringsAsFactors = FALSE)
+  colnames(state.seq.df) <- colname.vec # Attach the column names
+  # Drop the original matrix from memory
+  rm(state.seq.matrix)
+  
+  # Concatenate the word sequence into 1 column
+  seq.cat <- unlist(foreach(i=1:dim(state.seq.df)[1]) %do% paste(paste(state.seq.df[i,], sep =' '), collapse = ' '))
+  # Attach the column to the overall data frame
+  state.seq.df <- data.frame(state.seq.df, "Seq" = seq.cat)
+  return(state.seq.df)
+}
+
+# Possible States
+# Input: states.vec - a vector of observed states
+#        order - the desired order of Markov Model
+# Output: empty.matrix - a matrix of the proper dimensions for the order of Markov Model and the number of unique states
+#         possible.states.dim - a data frame that shows what state(s) each matrix row number corresponds to
+#         trans.states.dim - a data frame that shows which transition state each matrix column number corresponds to
+
+
+# Function creation above ....
+
+#_______________________________________________________________________
+
+# Example by hand below ...
+
+
 #-------------
 # Common Preamble
 #-------------
 
 library(plyr)
+library(foreach)
 test <- c("This", "is", "a", "character", "vector", "this", "is", "a", "test", ".")
 
 # Create an Ordered Unique word list

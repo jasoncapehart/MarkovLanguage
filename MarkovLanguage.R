@@ -107,9 +107,9 @@ mm.generator <- function(states.vec, order) {
   
   # Preallocate and empty matrix
   # Count the number of unique histories
-  unique.histories <- length(unique(position.table$RowNum))
+  unique.histories <- dim(history.dim)[1]
   # Count the number of unique states
-  unique.count <-length(unique(states.vec))
+  unique.count <- dim(trans.states.dim)[1]
   # Preallocate Step
   empty.mm <- matrix(0, nrow=unique.histories, ncol = unique.count)
   
@@ -117,7 +117,8 @@ mm.generator <- function(states.vec, order) {
   freq.matrix <- matrix.insert(matrix.name = empty.mm, insert.row = position.table$RowNum
               , insert.col = position.table$ColNum, insert.val = position.table$Freq)
   
-  mm <- as.matrix(aaply(.data=freq.matrix, .margins=1, .fun= function(x) if (sum(x) == 0) x else x/sum(x)))
+  row.totals <- apply(X=freq.matrix, MARGIN=1, FUN = sum)
+  mm <- freq.matrix / row.totals
   dimnames(mm) <- NULL
 
   # Return all markov matrix objects

@@ -13,8 +13,6 @@ start <- Sys.time()
 mm.object.2 <- mm.generator(states.vec = hod, order = 2)
 elapsed <- Sys.time() - start # 1.43 min with mm.generator() change, didn't work before
 simulate.text(mm.object.2, order = 2, nwords = 10)
-# Produces the following error:
-# Error: (length(precursor.word) >= 2 || order == 1 || is.character(text.vector)) is not TRUE
 
 # Perplexity Test
 

@@ -1,6 +1,6 @@
 # Markov Model Language Simulator
 # Lizzie Silver
-# Last updated: 11.26.2011
+# Last updated: 11.29.2011
 
 # to do:
 # fix minor bug in set.precursor.2
@@ -23,7 +23,7 @@
 #    mm.object[[3]] - another data frame, for converting matrix column indices to words. In the 1st
 #      order case this will be identical to mm.object[[2]], whereas in the second order case they 
 #      differ: mm.object[[2]] contains the preceding two words used to generate the following word,
-#      which is in mm.objecct[[3]]
+#      which is in mm.object[[3]]
 # order - the order of the model
 # nwords - the desired output vector length (if it's a vector, simulate.text returns a list of 
 #    vectors of the desired lengths). 
@@ -32,17 +32,18 @@
 #    precursor.word is set to a period by default, so that the first word of the output vector will  
 #    naturally be a sentence-starter word. Try setting it to a question mark or exclamation mark.
 #    In the 1st order case, if precursor.word has length > 1, simulate.text takes the last element.
-#    In the 2nd order case, precursor.word should be a character vector of length 2. 
-#      For example: precursor.word=c("Hello", "world")
-#      If it is  longer, simulate.text takes the last two elements.
-#      If it only has one element, another word will be chosen to precede it, sampled from all the 
-#      instances of that word in text.vector. 
+#    In the 2nd order case, precursor.word may be either: 
+#      (1) a character vector of length >= 2 - for example: precursor.word=c("Hello", "world") - or
+#      (2) a character vector containing at least two words separated by a space = for example: 
+#          precursor.word="Hello world" 
+#      If precursor.word is longer, simulate.text takes the last two elements.
+#      If precursor.word only contains one word, another word will be chosen to precede it, sampled 
+#      from all the instances of the given word in text.vector. 
 #        For example: if the user inputs precursor.word=".", the actual precursor word might 
 #        become "over ." or "end .", if the sequences ("over", ".") and ("end", ".") both appear 
 #        in text.vector.
-#    precursor.word MUST be one of the states in the model (unless random.precursor==TRUE).
-#      If it is outside the model, a warning will appear and a different precursor.word will be 
-#      chosen at random from text.vector.
+#    NOTE: precursor.word MUST be one of the states in the model. If it is outside the model, you 
+#      MUST provide text.vector so that an alternative precursor can be chosen.
 # If random.precursor==TRUE, the precursor word is chosen randomly from text.vector. This overrides
 #    the value of precursor.word.
 #    Note: just like precursor.word, this randomly chosen word will not appear in the output.
@@ -60,7 +61,7 @@
 #    full.sentences==TRUE, shorter). 
 # If nwords is a vector, simulate.text outputs a list of such character vectors.
 #----------------------------------------------
-simulate.text <- function(mm.object, order, nwords, precursor.word=".", 
+simulate.text <- function(mm.object, order, nwords, precursor.word=c("sea","."), 
                             random.precursor=FALSE, text.vector=NULL, 
                             full.sentences=FALSE){
   x <- mm.object[[1]]
@@ -81,7 +82,7 @@ simulate.text <- function(mm.object, order, nwords, precursor.word=".",
   stopifnot((random.precursor==FALSE || is.character(text.vector)))
   # Test: if the model is 2nd-order but precursor.word has length 1, text.vector should be a 
   #   character vector
-  stopifnot((length(precursor.word)>=2 || order==1 || is.character(text.vector)))
+  # stopifnot((length(precursor.word)>=2 || order==1 || is.character(text.vector)))
   ### Need to add test: precursor.word should appear in the word column of dictionary (or 
   #     if not, text.vector must be provided).
   # END TESTS ----------------------------------
@@ -119,14 +120,19 @@ simulate.text <- function(mm.object, order, nwords, precursor.word=".",
 #----------------------------------------------
 set.precursor.1 <- function(precursor.word, random.precursor, text.vector, row.dictionary){
     if (random.precursor==TRUE){    
+      if(is.null(text.vector)==TRUE){stop("Error: Simulator cannot sample a random precursor.word 
+  		unless you provide a value for text.vector.")}
       word.0 <- sample(text.vector, size=1)
     } else {
+      precursor.vector <- unlist(strsplit(precursor.word, split=" "))
       # if the user specified a vector with more than one element, take the last:
-      word.0 <- precursor.word[length(precursor.word)] 
+      word.0 <- precursor.vector[length(precursor.vector)] 
       # Test: check that word.0 is in the model:
       if (length(which(row.dictionary[,2]==word.0))==0) {
         warning("Specified precursor word is outside the model. 
                 A different precursor will be chosen at random.")
+        if(is.null(text.vector)==TRUE){stop("Error: Simulator cannot sample a random precursor.word 
+  		  unless you provide a value for text.vector.")}
         word.0 <- sample(text.vector, size=1)
       }
     }
@@ -137,35 +143,50 @@ set.precursor.1 <- function(precursor.word, random.precursor, text.vector, row.d
 # Set the precursor word for 2nd order models
 #----------------------------------------------
 set.precursor.2 <- function(precursor.word, random.precursor, text.vector, row.dictionary){
+  # Random first word:
   if (random.precursor==TRUE){    
+  	if(is.null(text.vector)==TRUE){stop("Error: Simulator cannot sample a random precursor.word 
+  		 unless you provide a value for text.vector.")}
     # Pick a random index from text.vector (excluding the first word):
     word.0.index <- sample(c(2:length(text.vector)), size=1)
     # Take the word at that index, and the one preceding it:
     word.0 <- paste(as.character(text.vector[word.0.index-1]), as.character(text.vector[word.0.index]), sep=" ")
   } else {
-    # If precursor.word has at least two elements, take the last two:
-    if (length(precursor.word)>=2){
-      word.0 <- paste(precursor.word[length(precursor.word)-1], precursor.word[length(precursor.word)], sep=" ")
+
+    # If precursor.word has at least two words, take the last two:
+    precursor.vector <- unlist(strsplit(precursor.word, split=" "))
+    if (length(precursor.vector)>=2){
+      word.0 <- paste(precursor.vector[length(precursor.vector)-1], precursor.vector[length(precursor.vector)], sep=" ")
     } else {
-      # If precursor.word only has one element: 
+
+      # If precursor.word only contains one word, we sample another from text.vector:
+      if(is.null(text.vector)==TRUE){stop("Error: Simulator cannot sample a random precursor.word 
+  		unless you provide a value for text.vector.")}
       # 1. Go to text.vector, remove the first word. 
       # 2. Sample an instance of precursor.word in text.vector. 
       # 3. Take the preceding word from that instance.
-      instances <- which(text.vector[-1]==precursor.word)
+      instances <- which(text.vector==precursor.word)
       if(length(instances)==1){
         word.0.index <- instances
-      } else {
+      } 
+      if(length(instances)>1){
         word.0.index <- sample(instances, size=1)
       }
-      word.0 <- paste(as.character(text.vector[word.0.index]), as.character(text.vector[word.0.index + 1]), sep=" ")
- ### ^ need to add a fix for when the ONLY instance is the 1st word of text.vector
+      if(length(instances)==0){
+      	warning("Specified precursor word is outside the model! A different precursor will be chosen at random.")
+        word.0.index <- sample(length(text.vector), size=1)
+      }      
+      # But just in case we end up with the very first word:
+      if (word.0.index==1){word.0.index <- 2} 
+      word.0 <- paste(as.character(text.vector[word.0.index-1]), as.character(text.vector[word.0.index]), sep=" ")
 
       # Test: check that word.0 is in the model:
       if (length(which(row.dictionary[,2]==word.0))==0) {
-        warning("Specified precursor word is outside the model. 
-                A different precursor will be chosen at random.")
+        warning("Specified precursor word is outside the model! A different precursor will be chosen at random.")
+        if(is.null(text.vector)==TRUE){stop("Error: Simulator cannot sample a random precursor.word 
+  		  unless you provide a value for text.vector.")}
         word.0.index <- sample(c(2:length(text.vector)), size=1)
-        word.0 <- paste(as.character(text.vector[word.0.index-1]), as.character(text.vector[word.0.index]), sep=" ")
+        word.0 <- paste(as.character(text.vector[word.0.index]), as.character(text.vector[word.0.index+1]), sep=" ")
       }
     }
   }
@@ -286,5 +307,5 @@ simulate.text(rain.object.1, order=1, nwords=12, precursor.word="Don't", random.
               text.vector=rain.test, full.sentences=FALSE)
 simulate.text(rain.object.2, order=2, nwords=12, precursor.word=c("Don't","tell"), 
               random.precursor=FALSE, text.vector=NULL, full.sentences=FALSE)
-simulate.text(rain.object.2, order=2, nwords=12, precursor.word="Don't", random.precursor=TRUE, 
+simulate.text(rain.object.2, order=2, nwords=12, precursor.word="Whatever", random.precursor=FALSE, 
               text.vector=rain.test, full.sentences=FALSE)

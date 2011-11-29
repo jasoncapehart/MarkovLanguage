@@ -1,32 +1,536 @@
-# Markov Language Models
+###############################
+# Markov Language Model Project
+###############################
+# Lizzie Silver, Alexander Murray-Watters, Sean Han, Jason Capehart
+# Last Updated: 11.28.11
 
+# Function List
+# 1) Text Processing
+#   a) part.1()        -  a text processing function
+# 2) Markov Matrix
+#   a) mm.generator()  - Generates a markov matrix  
+#   b) actual.states() - Called by mm.generator(). Produces ngram frequencies and lookup tables
+#   c) ngram()         - Called by actual.states(). Generates "ngrams" for a set of input states
+#   d) matrix.insert() - Called by mm.generator(). Inserts values at specified elements of a matrix
+# 3) Simulator
+#   a) simulate.text()   - Generates simulated text from a Markov Model
+#   b) set.precursor.1() - Called by simulate.text(). Chooses a starting word for a 1st order model
+#   c) set.precursor.2() - Called by simulate.text(). Chooses a starting word for a 2nd order model
+#   d) new.sentence()    - Called by simulate.text(). Simulates a sentence
+#   e) next.word()       - Called by simulate.text(). Outputs the next state picked by the simulation
+#   f) next.row.2()      - Called by new.sentence(). Calculates the new state history based on the previous history and the most recent state
+#   g) curtail()         - Called by simulate.text(). Truncates a simulated sentence if a ".", "?", or "!" is reached
+# 4) Perplexity
+#   a) perplexity()      - Calculates the perplexity for a given sequence of states and Markov Model as input
+
+#-----------------
+# Required Packages
+#------------------
 library(Rstem)
+library(plyr)
 library(tau)
-
-# Load the Heart of Darkness
-hod <- readLines('http://www.gutenberg.org/cache/epub/526/pg526.txt')
-hod <- tolower(hod)
-hod <- gsub(pattern = '[!;.,?\"-]', replacement = '', x = hod)
-hod <- strsplit(hod, ' ')
-hod <- unlist(hod)
-
-length(unique(hod))
-# 6,874 unique words, numbers, and urls
-hod.words <- unique(hod)
-length(unique(wordStem(hod.words, "english")))
-# Down to 5,290 unique words, numbers, and urls with the stemmer
-hod.words <- unique(wordStem(hod.words, "english"))
-length(as.vector(textcnt(hod.words, method="string", n = 2L)))
-# 5306 unique bigrams
-# 5315 unique trigrams <-- doesn't seem right'
-
-example <- 'This; sentence, \"has ! commas -- and. Periods. And ? marks?'
-nex <- gsub(pattern = '[!;.,?\"-]', replacement = '', x = example)
-strsplit(nex, ' ')
+library(foreach)
 
 
+#_________________________
+# (1) Text Processing
+#_________________________
+#--------------
+# (1.a) part.1() - Text Processing Function
+#---------------
+
+part.1<-function(text="pg526.txt"){
+
+  library(Rstem)
+	library(plyr)
+
+	text<-readLines(text)
+
+	text<-paste(text[40:((length(text)-361))], collapse='\n') # removing parts of file which pertain to license. 40 and -361 correspond to the start/end points of the license document. 
 
 
-simple <- 'This dog is a lab which is a mammal'
-textcnt(simple, method = "string", n = 2L)
-as.vector(textcnt(simple, method = "string", n = 2L))
+	pat<-c("[[:alpha:]]*||\\.")
+
+	m <- gregexpr(pat, text, ignore.case = TRUE)
+	x <- regmatches(text, m)
+	x <- do.call(c, x)
+
+	m <- regexec(pat, x, ignore.case = TRUE)
+	words <- regmatches(x, m)
+
+	words[words==""]<-NULL # Removes empty strings
+
+	words.vector<-unlist(words) # Just converting list to vector
+
+	# This is the stemming part of the code - not sure if this is what was wanted as output.	
+	final.words<-wordStem(words.vector, language="english") 
+
+
+	return(final.words)
+}
+
+#_________________________
+# (2) Markov Matrix
+#_________________________
+
+# Benchmarks
+#    On Pentium i7 with 8 GB Ram with Windows 7 x64
+#       (A) 1.54 min - 1st order markov matrix for Heart of Darkness Corpus
+#       (B) 1.61 min - 2nd order markov matrix for Heart of Darkness Corpus
+
+# TO DO: 
+#    (1) Use the textcnt() function in the tau() package instead of ngram()
+#    (2) Add require() to necessary functions
+#    (3) Revist the matrix.insert() function
+#    (4) Clean up code and make more concise, especially in actual.states()
+#          (i) Refine terminology for "states", "histories", function names, etc.
+#    (5) Revisit sparse matrices to create a matrix which enumerates all possible state histories in the rows
+
+#----------------------------------------------
+# (2.a) Markov Matrix Generator
+# Input: states.vec - a vector of observed states
+#        order - the desired order of Markov Model (i.e. how many previous states the process depends on)
+# Output: (1) A markov matrix for the input sequence
+#         (2) A lookup table of possible states
+#         (3) A lookup table of transition states
+# Calls: actual.states(), ngram(), matrix.insert()
+# Requires: plyr and foreach
+#------------------------------------------------
+
+mm.generator <- function(states.vec, order) {
+  
+  # Get the observed frequencies from actual.states()
+  actual.states.objects <- actual.states(states.vec, order)
+  position.table <- actual.states.objects$position.table
+  history.dim <- actual.states.objects$history.dim
+  trans.states.dim <- actual.states.objects$trans.states.dim
+  
+  # Preallocate and empty matrix
+  # Count the number of unique histories
+  unique.histories <- length(unique(position.table$RowNum))
+  # Count the number of unique states
+  unique.count <-length(unique(states.vec))
+  # Preallocate Step
+  empty.mm <- matrix(0, nrow=unique.histories, ncol = unique.count)
+  
+  #Use "RowNum" and "ColNum" from position.table to populate the empty.mm
+  freq.matrix <- matrix.insert(matrix.name = empty.mm, insert.row = position.table$RowNum
+              , insert.col = position.table$ColNum, insert.val = position.table$Freq)
+  
+  mm <- as.matrix(aaply(.data=freq.matrix, .margins=1, .fun= function(x) if (sum(x) == 0) x else x/sum(x)))
+  dimnames(mm) <- NULL
+
+  # Return all markov matrix objects
+  markov.objects <- list("markov.matrix" = mm
+        , "history.dim" = history.dim
+        , "trans.states.dim" = trans.states.dim)
+  
+  return(markov.objects)
+}
+
+#-------------------------------------------------
+# (2.b) Actual States
+# Input: states.vec - a vector of observed states
+#        order - the desired order of Markov Model
+# Output: position.table - a data frame with each observed state history, the frequency of the observation, and the position the observation will enter in the markov matrix
+# Calls: ngram()
+#----------------------------------------------
+
+actual.states <- function(states.vec, order) {
+  # (1) Obse#rved States
+  state.seq <- ngram(states.vec, order)
+  state.seq$Seq <- as.character(state.seq$Seq) #Force to char
+  # (2) Frequency of those States
+  freq.table <- as.data.frame(table(state.seq$Seq))
+  colnames(freq.table) <- c("Seq", "Freq")
+  freq.table$Seq <- as.character(freq.table$Seq)
+  
+  #TODO: This join should be fixed so the de-duplication step is unecessary
+  position.table <- merge(x=freq.table, y=state.seq, by="Seq")
+  position.table <- unique(position.table) #Dedupe the table
+  
+  # Create a lookup table between the history and corresponding row
+  history.row <- unique(position.table$History)
+  history.row <- history.row[order(history.row)]
+  history.dim <- data.frame("RowNum" = c(1:length(history.row)), "UniqueHistory" = history.row)
+  
+  # Create a lookup table between the transition state and corresponding column
+  trans.state.col <- paste("State", order+1, sep='')
+  trans.states <- unique(position.table[trans.state.col])
+  trans.states <- trans.states[order(trans.states), 1]
+  trans.states.dim <- data.frame("ColNum" = c(1:length(trans.states)), "TransState" = trans.states)
+  
+  # Row number lookup
+  tmp <- merge(x = position.table, y = history.dim, by.x = "History", by.y = "UniqueHistory", all.x=TRUE)
+  # Column number lookup
+  lookup.state.name <- paste("State", order+1, sep="")
+  tmp <- merge(x = tmp, y = trans.states.dim, by.x = lookup.state.name, by.y="TransState", all.x=TRUE)
+  position.table <- tmp
+
+  # Return history.dim, trans.states.dim, and the position.table
+  actual.states.objects <- list("position.table" = position.table
+      , "history.dim" = history.dim
+      , "trans.states.dim" = trans.states.dim)
+  
+  return(actual.states.objects)
+}
+
+#---------------------------------------
+# (2.c) Ngram function
+# Input: states.vec
+#        order - size of n-gram is equal to Markov Model order plus 1
+# Output: N gram data frame specifying the position of each state and the concatenated state sequence
+# Required: foreach() package
+# Called By: actual.states()
+#---------------------------------------
+
+ngram <- function(states.vec, order) {
+  
+  n <- order + 1 # the length of the n-gram is 1 greater than the order
+  obs <- length(states.vec) # Number of observations
+  # Preallocate matrix
+  state.seq.matrix <- matrix(data=0, nrow=obs-order, ncol=n)
+  colname.vec <- NULL # Initialize vector for column names
+  
+  # Set up each state sequence by manipulating the indices of the original "states.vec"
+  for (i in 1:n) {
+    state.i <- states.vec[i:(obs-(n-i))] # From first possible start point (i) to last possible end point obs-(n-i)
+    state.seq.matrix[, i] <- state.i #Overwrite the appropriate column
+    # Make a sequence of names for higher order Markov Models
+    name.i <- paste("State", i, sep='')
+    colname.vec <- c(colname.vec, name.i)
+  }
+  # Convert the matrix to a data frame to handle the strings
+  state.seq.df <- as.data.frame(state.seq.matrix, stringsAsFactors = FALSE)
+  colnames(state.seq.df) <- colname.vec # Attach the column names
+  # Drop the original matrix from memory
+  rm(state.seq.matrix)
+  
+  # Concatenate the word sequence into 1 column
+  seq.cat <- unlist(foreach(i=1:dim(state.seq.df)[1]) %do% paste(paste(state.seq.df[i, ], sep =' '), collapse = ' '))
+  history.cat <- unlist(foreach(i=1:dim(state.seq.df)[1]) %do% paste(paste(state.seq.df[i, 1:(dim(state.seq.df)[2]-1)], sep =' '), collapse = ' '))
+  # Attach the column to the overall data frame
+  state.seq.df <- data.frame(state.seq.df, "History" = history.cat, "Seq" = seq.cat)
+  return(state.seq.df)
+}
+
+#-----------------------------------------------
+# (2.d) Matrix Insert Function
+# Designed to be fast for sparse matrices by only visiting
+#   those elements in the matrix which need to be overwritten
+# Input: matrix.name - The matrix to have values inserted into
+#        insert.row - A vector of row positions that are in the proper order for the correspoding columns
+#        insert.col - A vector of column positions
+#        insert.val - The value to insert i.e. matrix.name[insert.row, insert.col] <- insert.val
+# Output: matrix with all values inserted
+# TODO: (1) Is there a way to vectorize this without reading/writing the entire
+#           matrix on each step, as I fear apply() would do?
+#       (2) How much does the sequence matter? In other words for a large matrix
+#           would it make sense to order the elements to make the distance between
+#           one write and the next as small as possible? My guess is sorting the
+#           list is more expensive than jumping to random positions on the matrix
+#           but I don't know that for sure.
+#----------------------------------------------------
+
+matrix.insert <- function(matrix.name, insert.row, insert.col, insert.val) {
+  total.writes <- length(insert.row)
+  for (i in 1:total.writes) {
+    matrix.name[insert.row[i], insert.col[i]] <- insert.val[i]
+  }
+  return(matrix.name)
+}
+
+
+#_________________________
+# (3) Simulator
+#_________________________  
+
+# Markov Model Language Simulator
+# Lizzie Silver
+# Last updated: 11.26.2011
+
+# to do:
+# fix minor bug in set.precursor.2
+# add more tests re: text.vector; precursor.word outside the model; full.sentences w/ small nwords
+
+#----------------------------------------------
+# (3.a) 1st and 2nd order Markov Model Language Simulator: 
+# simulate.text()
+#
+# Inputs:
+# mm.object - a markov model produced by Jason Capehart's generator. It should be a list with the
+#    following structure:
+#    mm.object[[1]] - the transition matrix. For a 1st-order model it is square. For a 2nd-order 
+#      model nrow >= ncol, with each row corresponding to a pair of words.
+#    mm.object[[2]] - a data frame for converting the matrix row indices to the corresponding words.
+#      mm.object[[2]][,1] is the indices, mm.object[[2]][,2] is the words (or pairs of words in the
+#      2nd order case). At the moment Jason's output has strings as factors, so these are coerced
+#      to characters during simulation. Also note that the pairs of words are character vectors of 
+#      length 1 (i.e. the words have been pasted together with a space between) rather than length 2
+#    mm.object[[3]] - another data frame, for converting matrix column indices to words. In the 1st
+#      order case this will be identical to mm.object[[2]], whereas in the second order case they 
+#      differ: mm.object[[2]] contains the preceding two words used to generate the following word,
+#      which is in mm.objecct[[3]]
+# order - the order of the model
+# nwords - the desired output vector length (if it's a vector, simulate.text returns a list of 
+#    vectors of the desired lengths). 
+#    Note: if full.sentences is TRUE, the actual output length may be shorter than nwords!
+# precursor.word - the starting state for the simulation. It is NOT included in the output.
+#    precursor.word is set to a period by default, so that the first word of the output vector will  
+#    naturally be a sentence-starter word. Try setting it to a question mark or exclamation mark.
+#    In the 1st order case, if precursor.word has length > 1, simulate.text takes the last element.
+#    In the 2nd order case, precursor.word should be a character vector of length 2. 
+#      For example: precursor.word=c("Hello", "world")
+#      If it is  longer, simulate.text takes the last two elements.
+#      If it only has one element, another word will be chosen to precede it, sampled from all the 
+#      instances of that word in text.vector. 
+#        For example: if the user inputs precursor.word=".", the actual precursor word might 
+#        become "over ." or "end .", if the sequences ("over", ".") and ("end", ".") both appear 
+#        in text.vector.
+#    precursor.word MUST be one of the states in the model (unless random.precursor==TRUE).
+#      If it is outside the model, a warning will appear and a different precursor.word will be 
+#      chosen at random from text.vector.
+# If random.precursor==TRUE, the precursor word is chosen randomly from text.vector. This overrides
+#    the value of precursor.word.
+#    Note: just like precursor.word, this randomly chosen word will not appear in the output.
+# text.vector - used for setting the precursor word. It is just a vector of the text used to train 
+#    Jason's model, as produced by Alexander Murray-Watters' program. 
+#    text.vector MUST be provided if: 
+#    (a) random.precursor==TRUE; or
+#    (b) the model is 2nd order, AND precursor.word has length 1, or
+#    (c) precursor.word is not in the model.
+# If full.sentences==TRUE, simulate.text truncates everything after the last period, question 
+#    mark or bang in the output (if there is at least one period, question mark or bang).
+# 
+# Output:
+# If nwords is a scalar, simulate.text outputs a character vector of length==nwords (or, if 
+#    full.sentences==TRUE, shorter). 
+# If nwords is a vector, simulate.text outputs a list of such character vectors.
+#----------------------------------------------
+simulate.text <- function(mm.object, order, nwords, precursor.word=".", 
+                            random.precursor=FALSE, text.vector=NULL, 
+                            full.sentences=FALSE){
+  x <- mm.object[[1]]
+  row.dictionary <- mm.object[[2]]
+  column.dictionary <- mm.object[[3]]
+
+  # TESTS TESTS TESTS --------------------------
+  # Test: x should be a matrix; have non-negative entries
+  stopifnot(is.matrix(x), all(x >= 0))
+  # Test: rowsums of x should all equal 1
+  K <- nrow(x) 
+  stopifnot(all.equal(as.vector(rowSums(x)),rep(1,K))) 
+  # Test: nwords should be a numeric vector of length 1 or more; non-negative entries; 
+  #   integer entries; at least one non-zero entry
+  stopifnot(is.numeric(nwords), length(nwords)>=1, sum(nwords>=0)==length(nwords), 
+            sum(nwords==round(nwords))==length(nwords), sum(nwords)>=1)
+  # Test: if random.precursor==TRUE, text.vector should be a character vector
+  stopifnot((random.precursor==FALSE || is.character(text.vector)))
+  # Test: if the model is 2nd-order but precursor.word has length 1, text.vector should be a 
+  #   character vector
+  stopifnot((length(precursor.word)>=2 || order==1 || is.character(text.vector)))
+  ### Need to add test: precursor.word should appear in the word column of dictionary (or 
+  #     if not, text.vector must be provided).
+  # END TESTS ----------------------------------
+
+  new.text <- list()
+
+  # Creating each chunk of new text:
+  for (i in 1:length(nwords)){     
+    # Set the precursor word (depending on order):
+    if (order==1){
+      word.0 <- set.precursor.1(precursor.word, random.precursor, text.vector, row.dictionary)
+    }
+    if (order==2){
+      word.0 <- set.precursor.2(precursor.word, random.precursor, text.vector, row.dictionary)
+    }
+    # Create a new chunk of text and add it to the list:
+    sentence <- new.sentence(x, nwords=nwords[i], word.0, row.dictionary, column.dictionary, order)
+    # If full.sentences==TRUE, cut off any half-sentences after the last ".", "?" or "!":
+    if (full.sentences==TRUE){  
+      sentence <- curtail(sentence)
+    }
+    new.text[[i]] <- sentence
+  } 
+
+  # if nwords is a scalar, simulate.1st.order returns a character vector, not a list:
+  if (length(nwords)==1){  
+    new.text <- new.text[[1]]
+  }
+  return(new.text)
+}
+
+
+#----------------------------------------------
+# (3.b) Set the precursor word for 1st order models
+#----------------------------------------------
+set.precursor.1 <- function(precursor.word, random.precursor, text.vector, row.dictionary){
+    if (random.precursor==TRUE){    
+      word.0 <- sample(text.vector, size=1)
+    } else {
+      # if the user specified a vector with more than one element, take the last:
+      word.0 <- precursor.word[length(precursor.word)] 
+      # Test: check that word.0 is in the model:
+      if (length(which(row.dictionary[,2]==word.0))==0) {
+        warning("Specified precursor word is outside the model. 
+                A different precursor will be chosen at random.")
+        word.0 <- sample(text.vector, size=1)
+      }
+    }
+  return(word.0)
+}
+
+#----------------------------------------------
+# (3.c) Set the precursor word for 2nd order models
+#----------------------------------------------
+set.precursor.2 <- function(precursor.word, random.precursor, text.vector, row.dictionary){
+  if (random.precursor==TRUE){    
+    # Pick a random index from text.vector (excluding the first word):
+    word.0.index <- sample(c(2:length(text.vector)), size=1)
+    # Take the word at that index, and the one preceding it:
+    word.0 <- paste(as.character(text.vector[word.0.index-1]), as.character(text.vector[word.0.index]), sep=" ")
+  } else {
+    # If precursor.word has at least two elements, take the last two:
+    if (length(precursor.word)>=2){
+      word.0 <- paste(precursor.word[length(precursor.word)-1], precursor.word[length(precursor.word)], sep=" ")
+    } else {
+      # If precursor.word only has one element: 
+      # 1. Go to text.vector, remove the first word. 
+      # 2. Sample an instance of precursor.word in text.vector. 
+      # 3. Take the preceding word from that instance.
+      instances <- which(text.vector[-1]==precursor.word)
+      if(length(instances)==1){
+        word.0.index <- instances
+      } else {
+        word.0.index <- sample(instances, size=1)
+      }
+      word.0 <- paste(as.character(text.vector[word.0.index]), as.character(text.vector[word.0.index + 1]), sep=" ")
+ ### ^ need to add a fix for when the ONLY instance is the 1st word of text.vector
+
+      # Test: check that word.0 is in the model:
+      if (length(which(row.dictionary[,2]==word.0))==0) {
+        warning("Specified precursor word is outside the model. 
+                A different precursor will be chosen at random.")
+        word.0.index <- sample(c(2:length(text.vector)), size=1)
+        word.0 <- paste(as.character(text.vector[word.0.index-1]), as.character(text.vector[word.0.index]), sep=" ")
+      }
+    }
+  }
+  return(word.0)
+}
+
+
+#----------------------------------------------
+# (3.d) new.sentence
+# Inputs: a precursor word (not included in output), a 1st or 2nd order markov transition matrix, 
+# and a row and a column dictionary (data frames) linking rows & column indices in the matrix to 
+# corresponding words
+# Output: a character vector of simulated text.
+#----------------------------------------------
+new.sentence <- function(x, nwords, word.0, row.dictionary, column.dictionary, order){
+  # Create an empty vector to hold the output:
+  sentence <- vector(length=nwords)
+  # Translate the precursor word into a row of the transition matrix:
+  word.i <- which(row.dictionary[,2]==word.0)
+  # Generate a vector of new words (actually just column indices) generated by the model
+  for (i in 1:nwords){
+    word.j <- next.word(word.i, x)
+    sentence <- c(sentence, word.j)
+    if (order==1){
+      word.i <- word.j
+    }
+    if (order==2){
+      word.i <- next.row.2(word.i, word.j, row.dictionary, column.dictionary)
+    }
+  }
+  # Translate the column indices into the words they correspond to:
+  sentence <- as.character(column.dictionary[sentence,2])
+  return(sentence)
+}
+
+
+#----------------------------------------------
+# (3.e) Given a transition matrix and a row number (word.i), next.word returns the column number 
+# after one transition. Works the same for both 1st and 2nd order models.
+#----------------------------------------------
+next.word <- function(word.i, x){
+  K <- ncol(x) 
+  word.j <- sample(1:K,size=1,prob=x[word.i,]) 
+  return(word.j)
+}
+
+#----------------------------------------------
+# (3.f) next.row.2 outputs the next row index after one transition in second order models.
+#----------------------------------------------
+next.row.2 <- function(word.i, word.j, row.dictionary, column.dictionary){
+  # Translate previous row number into character vector:
+  word.i.char <- as.character(row.dictionary[word.i,2])
+  # Extract the two individual words:
+  word.i.components <- unlist(strsplit(word.i.char, split=" "))
+  # Translate previous column number into character vector:
+  word.j.char <- as.character(column.dictionary[word.j,2])
+  # Take the second component of word.i and paste it onto word.j:
+  next.row.string <- paste(word.i.components[2],word.j.char, sep=" ")
+  # Find the corresponding row number:
+  next.row <- which(row.dictionary[,2]==next.row.string)
+  return(next.row)
+}
+
+
+#----------------------------------------------
+# (3.g) curtail takes a character vector and curtails it after the last period/question mark/bang (if it 
+# contains at least one period/question mark/bang).
+#----------------------------------------------
+curtail <- function(sentence){
+  # if there is at least one period/question mark/bang,
+  if ((sum(sentence=="." | sentence=="!" | sentence=="?")>0) 
+      # and it is not already the last word,
+      & (sentence[length(sentence)] != ".") 
+      & (sentence[length(sentence)] != "!")
+      & (sentence[length(sentence)] != "?")){ 
+    # then the position of the last period/question mark/bang is the end of the vector
+    end <- max(which(sentence == "."| sentence == "!" | sentence == "?")) 
+    # and we cut off everything else
+    sentence <- sentence[-c((end+1):length(sentence))] 
+  }
+  return(sentence)
+}
+
+
+#_________________________
+# (4) Perplexity
+#_________________________  
+
+# (4.a)
+# Perplexity function takses four arguments:
+# ouput vector generated by Markov Chain, range in percentage i.e.(90,100)
+# a transition matrix, and vector of names which matches the rows of transition matrix 
+perplexity <- function(output, range=c(start,end), matrix, words) { 
+  
+	#Check whether output is a vector 
+	if(is.vector(output)==FALSE){
+	  break()
+	}
+	
+	n <- length(output)
+	
+	# Position of starting word 
+	s <- round(n*(start/100))
+	# Position of ending word 
+	e <- round(n*(end/100))
+	
+	# Null vector which will store probabilities for each word from transition matrix 
+	p <- vector()
+	d <- e-s
+	n 
+	# Loop to store probabilities 
+		for(i in 0:d) {
+			p <- matrix[grep(output[s+i-1],words), grep(output[s+i],words)]
+		}
+		
+		entropy <- (-1)*sum(p*log(p,base=2))
+	return(2^entropy)
+	
+}
+  
+

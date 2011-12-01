@@ -129,7 +129,9 @@ mm.generator <- function(states.vec, order) {
   # Return all markov matrix objects
   markov.objects <- list("markov.matrix" = mm
         , "history.dim" = history.dim
-        , "trans.states.dim" = trans.states.dim)
+        , "trans.states.dim" = trans.states.dim
+        , "order" = order
+        )
   
   return(markov.objects)
 }

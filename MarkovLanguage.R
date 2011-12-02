@@ -102,7 +102,7 @@ part.1<-function(text="pg526.txt", stem=FALSE){
 # Requires: plyr and foreach
 #------------------------------------------------
 
-mm.generator <- function(states.vec, order) {
+mm.generator <- function(states.vec, order, frequency.matrix = FALSE) {
   
   # Get the observed frequencies from actual.states()
   actual.states.objects <- actual.states(states.vec, order)
@@ -127,12 +127,20 @@ mm.generator <- function(states.vec, order) {
   dimnames(mm) <- NULL
 
   # Return all markov matrix objects
-  markov.objects <- list("markov.matrix" = mm
+  if (frequency.matrix == FALSE) { 
+    markov.objects <- list("markov.matrix" = mm
         , "history.dim" = history.dim
         , "trans.states.dim" = trans.states.dim
         , "order" = order
         )
-  
+  } else {
+    markov.objects <- list("markov.matrix" = mm
+        , "history.dim" = history.dim
+        , "trans.states.dim" = trans.states.dim
+        , "order" = order
+        , "freq.matrix" = freq.matrix
+        )
+  }
   return(markov.objects)
 }
 
@@ -527,83 +535,73 @@ curtail <- function(sentence){
 
 
 #_________________________
-# (4) Perplexity
+# (4) Model Scoring
 #_________________________  
 
-# (4.a)
-## Sean Seung Su Han 
-## Markov Language Model 
-## Perplexity 
-## Last Updated: 11/29/2011
+#------------------------------------
+# Language Model Probability
+# Input: input.vec - test data which a character vector with a sequence of states
+#        markov.object - an object created by mm.generator()
+# Output: a data frame with the language model's probability for each sequence in the input text
+# Requires: tau, foreach
+# Calls: ngram()
+#------------------------------------
 
-#Generating Partial Markov Matrix 
-
-#Inputs: states.vec - a vector of observed states 
-#  	 range - range of a vector to generate Markov Matrix 
-#		 order - the desired order of markov matrix 
-#Output: A markov matrix for input sequence 
-#		 A lookup table of possible states
-#		 A lookup talbe of transition states 
-#Calls: part.1, mm.generator
-#Requries: Rstem, plyr, tau, foreach
-
-partial.mm <- function(states.vec,range=c(start,end),order){
-	
-	state.vec<-part.1(states.vec)
-	
-	#start point if start == 0, start = text[1]
-	if (start==0){
-		s.point <- 1
-	} else {s.point <- round(length(state.vec)*(start/100)) }
-	#end point if end = 100, end = length of state vector 
-	if (end==100){
-		e.point <- length(text)
-	} else {e.point <- round(length(state.vec)*(end/100))}
-	
-	partial.state.vec <- state.vec[s.point:e.point]
-	
-	mm <- mm.generator(partial.state.vec,order)
-	return(mm)
+lang.model.prob <- function(input.vec, markov.object) {
+  
+  require(tau)
+  # Check to make sure input.vec is a character vector
+  stopifnot(is.character(input.vec))
+  
+  # Create the sequence of state histories and transitions to look up
+  state.seq.df <- ngram(states.vec = input.vec, order = markov.object$order)
+  # Find the name of the transition state
+  trans.state.col.name <- paste("State", markov.object$order + 1, sep = '')
+  
+  # Backoff Strategy Note: Leave entire state.seq.df to use with lower order markov model
+  # Cut the unnecessary data out of the state.seq.df
+  prob.df <- data.frame("History" = state.seq.df$History
+                        , "TransState" = state.seq.df[trans.state.col.name])
+  colnames(prob.df)[which(colnames(prob.df) == trans.state.col.name)] <- "TransState" #Rename the final state column name
+  rm(state.seq.df) # Remove the state.seq.df entirely
+  
+  # Merge the row and column numbers using the history.dim and trans.state.dim
+  prob.df <- merge(x = prob.df, y = markov.object$history.dim
+               , by.x = "History", by.y = "UniqueHistory", all.x = TRUE)
+  prob.df <- merge(x = prob.df, y = markov.object$trans.states.dim
+               , by.x = "TransState", by.y = "TransState", all.x = TRUE)
+  
+  # Find the probability that corresponds to each history in the input.vec
+  prob.vec <- unlist(foreach(i=1:dim(prob.df)[1]) %do% markov.object$markov.matrix[prob.df[i, "RowNum"], prob.df[i, "ColNum"]])
+  prob.df <- data.frame(prob.df, "Prob" = prob.vec)
+  
+  return(prob.df)
 }
 
+#------------------------------------------
+## Average log-likelihood 
+## Input: prob.vec - probabilities from the markov.object assigned to each transitions in test.vec 
+## Output: Average log-likelihood
+#------------------------------------------
 
+avg.log <- function(prob.vec){
+  
+	prob.vec <- replace(prob.vec,is.na(prob.vec),0)
+	log <- prob.vec*log(prob.vec,base=2)
+	sum.log <- sum(log,na.rm=T)
+	avg.log <- sum.log / length(prob.vec)
 	
-##Perplextiy 
-# Call: partial.mm
-# Inputs: states.vec, range
-# Output: perplexity 
-perplexity <- function(states.vec, range=c(start,end)) { 
-	
-	n <- length(states.vec)
-	
-	# Position of starting word 
-	s <- round(n*(start/100))
-	# Position of ending word 
-	e <- round(n*(end/100))
-	
-	##Call. partial.mm and store as mat 
-	mat <- partial.mm(states.vec,range)$markov.matrix
-	hist.dim <- partial.mm(states.vec,range)$history.dim
-	trans.dim <- partial.mm(states.vec,range)$trans.states.dim
-	
-	# Null vector which will store probabilities for each word from transition matrix 
-	p <- vector()
-
-	# Loop to store probabilities 
-		for(i in 1:e) {
-			p <- mat[match(states.vec[s+i],hist.dim), match(states.vec[s-1+i],trans.dim)]
-		}
-		
-	#Smoothing 
-	#	Replace Missing Values with small number, 1/50000
-	p <-replace(p,is.na(p),1/50000)
-	
-	#Calculating Entropy
-	entropy <- (-1)*sum(p*log(p,base=2))
-	perplexity <- 2^entropy		
-	
-	return("perplexity"=perplexity)
-	
+	return("Average Log-likelihood"=avg.log)
 }
 
+#---------------------------------
+## Out-of-Vocab rate
+## Input: prob.vec 
+## Output: The rate of out-of-vocabularies in test input 
+#----------------------------------
 
+out.of.vocab <- function(prob.vec){
+  
+	return(sum(is.na(prob.vec))/length(prob.vec))
+	
+}

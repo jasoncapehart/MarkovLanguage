@@ -1,27 +1,9 @@
-# Average log-likelihood
-
-# (1) Assume input is parsed into character vector
-#     + check this assumption
-# (2) Work the input vector a data frame with a "history" and "state" column
-# (3) Match "history" and "state" with row and col numbers with NAs for no match
-# (4) Lookup up probabilities in the markov matrix (except NAs)
-# (5) Apply function of choice to the probabilities
-
-train <- c("This", "is", "a", "test", "and", "is", "a", "vector")
-test <- c("This", "is", "a", "test", "and", "has", "new", "words")
-
-mm.obj <- mm.generator(states.vec = train, order = 2)
-lang.model.prob(input.vec = test, markov.object = mm.obj)
-
-
 # Language Model Probability
-# Input
+# Input: input.vec - test data which a character vector with a sequence of states
+#        markov.object - an object created by mm.generator()
 # Output: a data frame with the language model's probability for each sequence in the input text
 # Requires: tau, foreach
 # Calls: ngram()
-
-markov.object <- mm.generator(states.vec=test, order = 2)
-input.vec <- test
 
 lang.model.prob <- function(input.vec, markov.object) {
   

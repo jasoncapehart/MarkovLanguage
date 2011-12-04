@@ -2,7 +2,7 @@
 # Markov Language Model Project
 ###############################
 # Lizzie Silver, Alexander Murray-Watters, Sean Su Han, Jason Capehart
-# Last Updated: 11.30.11
+# Last Updated: 12.4.11
 
 # Function List
 # 1) Text Processing
@@ -20,9 +20,15 @@
 #   e) next.word()       - Called by simulate.text(). Outputs the next state picked by the simulation
 #   f) next.row.2()      - Called by new.sentence(). Calculates the new state history based on the previous history and the most recent state
 #   g) curtail()         - Called by simulate.text(). Truncates a simulated sentence if a ".", "?", or "!" is reached
-# 4) Perplexity
-#   a) partial.mm()      - Called by perplexity().
-#   a) perplexity()      - Calculates the perplexity for a given sequence of states and Markov Model as input
+# 4) Model Scoring
+#   a) lang.model.prob() - Data frame with relelvant information on test data: probabilities, etc.
+#   b) lang.scoring()    - Convenience wrapper for language model scoring functions.
+#   c) perplexity()      - Calculates the perplexity for a given sequence of states and Markov Model as input
+#   d) out.of.vocab()    - The rate at which test words do not appear in the training corpus
+#   e) avg.likelihood()  - Average log likelihood of transistion states according to markov matrix
+#   f) avg.prob()        - Average probability of transition states as calculated by markov matrix
+# 5) Smoothing
+#   a) laplace.smoother()  - Add 1 smoothing
 
 #-----------------
 # Required Packages
@@ -98,6 +104,8 @@ part.1<-function(text="pg526.txt", stem=FALSE){
 # Output: (1) A markov matrix for the input sequence
 #         (2) A lookup table of possible states
 #         (3) A lookup table of transition states
+#         (4) A reference for the probability of unobserved states
+#         (5) A frequency matrix, if requested
 # Calls: actual.states(), ngram(), matrix.insert()
 # Requires: plyr and foreach
 #------------------------------------------------
@@ -132,12 +140,14 @@ mm.generator <- function(states.vec, order, frequency.matrix = FALSE) {
         , "history.dim" = history.dim
         , "trans.states.dim" = trans.states.dim
         , "order" = order
+        , "unobserved.prob" = NA
         )
   } else {
     markov.objects <- list("markov.matrix" = mm
         , "history.dim" = history.dim
         , "trans.states.dim" = trans.states.dim
         , "order" = order
+        , "unobserved.prob" = 0
         , "freq.matrix" = freq.matrix
         )
   }
@@ -547,7 +557,7 @@ curtail <- function(sentence){
 # Calls: ngram()
 #------------------------------------
 
-lang.model.prob <- function(input.vec, markov.object) {
+lang.model.prob <- function(input.vec, markov.object, smooth = FALSE) {
   
   require(tau)
   # Check to make sure input.vec is a character vector
@@ -574,6 +584,11 @@ lang.model.prob <- function(input.vec, markov.object) {
   # Find the probability that corresponds to each history in the input.vec
   prob.vec <- unlist(foreach(i=1:dim(prob.df)[1]) %do% markov.object$markov.matrix[prob.df[i, "RowNum"], prob.df[i, "ColNum"]])
   prob.df <- data.frame(prob.df, "Prob" = prob.vec)
+  
+  # Replace unobserved state histories with probability specified by markov object if smooth = TRUE
+  if (smooth == TRUE) {
+    prob.df[is.na(prob.df), "Prob"] <- markov.object$unobserved.prob
+  }
   
   return(prob.df)
 }
@@ -663,4 +678,36 @@ avg.prob <- function(prob.vec){
 	avg.prob <- mean(prob)
 	
 	return(avg.prob)
+}
+
+#____________________________________
+# Smoothing
+#______________________________________
+
+#-----------------------------------------------------
+# Laplace Smoother (Add-1 Smoothing)
+# Input: markov.object     - A markov object from the mm.generator() function
+# Output: markov.object   - The same object as input, but with smoothed transition matrix
+#         unobserved.prob - The probability assigned to all state histories with 0 observations
+#------------------------------------------------------
+
+laplace.smoother <- function(markov.object) {
+  # Stop if frequency matrix does not exist in markov object
+  stopifnot(markov.object$freq.matrix != NULL)
+  
+  # Add 1 to all observed histories
+  markov.object$freq.matrix <- markov.object$freq.matrix + 1
+  # Create a markov matrix
+  row.totals <- apply(X=markov.object$freq.matrix, MARGIN=1, FUN = sum)
+  mm <- markov.object$freq.matrix / row.totals
+  dimnames(mm) <- NULL
+  
+  markov.object$markov.matrix <- mm
+  
+  # Calculate the probability of an unobserved history
+  total.transition.states <- dim(markov.object$freq.matrix)[2]
+  unobserved.prob <- 1 / total.transition.states
+  markov.object$unobserved.prob <- unobserved.prob
+  
+  return(markov.object)
 }

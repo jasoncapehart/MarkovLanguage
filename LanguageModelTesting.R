@@ -10,10 +10,9 @@ simulate.text(mm.object.1, order = 1, nwords = 10)
 
 # Second Order Test
 start <- Sys.time()
-mm.object.2 <- mm.generator(states.vec = hod, order = 2)
+mm.object.2 <- mm.generator(states.vec = hod, order = 2, frequency.matrix = TRUE)
 elapsed <- Sys.time() - start # 1.43 min with mm.generator() change, didn't work before
-simulate.text(mm.object.2, order = 2, nwords = 10)
-
+simulate.text(mm.object.2, order = 2, nwords = 50, text.vector=hod)
 
 # Scoring Functionality
 
@@ -26,3 +25,9 @@ out.of.vocab(check$Prob)
 avg.log(check$Prob)
 perplexity(check$Prob)
 
+
+
+# Smoother Test
+smoother.mm.2 <- laplace.smoother(markov.object = mm.object.2)
+check <- lang.model.prob(input.vec = hod[1:25], markov.object=smoother.mm.2, smooth=TRUE)
+lang.scoring(prob.vec = check$Prob, cross.entropy = TRUE)

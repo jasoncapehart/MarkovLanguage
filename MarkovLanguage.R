@@ -2,7 +2,7 @@
 # Markov Language Model Project
 ###############################
 # Lizzie Silver, Alexander Murray-Watters, Sean Su Han, Jason Capehart
-# Last Updated: 12.4.11
+# Last Updated: 12.5.11
 
 # Function List
 # 1) Text Processing
@@ -29,6 +29,9 @@
 #   f) avg.prob()        - Average probability of transition states as calculated by markov matrix
 # 5) Smoothing
 #   a) laplace.smoother()  - Add 1 smoothing
+#   b) gte.smoother()      - Good Turing Estimate Smoother
+# 6) Cross Validation
+#   a) seq.cross.val()  - Sequential cross validation
 
 #-----------------
 # Required Packages
@@ -555,9 +558,14 @@ curtail <- function(sentence){
 # Output: a data frame with the language model's probability for each sequence in the input text
 # Requires: tau, foreach
 # Calls: ngram()
+# TODO: Remove "unobserved.prob" step from language scoring functions
+#       and insert it into lang.model.prob() instead. That will allow
+#       an arbitrary penalty to be input without writing into the prob.df
+#       multiple times. The sequential.cross.valdiation function will have to
+#       be adjusted as well.
 #------------------------------------
 
-lang.model.prob <- function(input.vec, markov.object, smooth = FALSE) {
+lang.model.prob <- function(input.vec, markov.object) {
   
   require(tau)
   # Check to make sure input.vec is a character vector
@@ -583,12 +591,11 @@ lang.model.prob <- function(input.vec, markov.object, smooth = FALSE) {
   
   # Find the probability that corresponds to each history in the input.vec
   prob.vec <- unlist(foreach(i=1:dim(prob.df)[1]) %do% markov.object$markov.matrix[prob.df[i, "RowNum"], prob.df[i, "ColNum"]])
-  prob.df <- data.frame(prob.df, "Prob" = prob.vec)
+  oov <- ifelse(is.na(prob.vec), yes = 1, no = 0) # Out of Vocabulary flag
+  prob.df <- data.frame(prob.df, "Prob" = prob.vec, "oov.flag" = oov)
   
-  # Replace unobserved state histories with probability specified by markov object if smooth = TRUE
-  if (smooth == TRUE) {
-    prob.df[is.na(prob.df), "Prob"] <- markov.object$unobserved.prob
-  }
+  # Replace unobserved state histories with probability specified by markov object
+  prob.df[which(is.na(prob.df$Prob) | prob.df$Prob == 0), "Prob"] <- markov.object$unobserved.prob
   
   return(prob.df)
 }
@@ -597,23 +604,23 @@ lang.model.prob <- function(input.vec, markov.object, smooth = FALSE) {
 # Language Model Scoring Function
 # This is a convenience wrapper for several scoring functions
 # Input: prob.vec - a vector of probabilities
-# Output: a list that includes measures for
+# Output: a data.frame that includes measures for
 #        out.of.vocab - out of vocabulary rate
 #        perplexity
 #        avg.log - average log-likelihood
 #        avg.prob - average probability
 #-------------------------------------------------
 
-lang.scoring <- function(prob.vec, ...) {
-  oov <- out.of.vocab(prob.vec)
+lang.scoring <- function(prob.vec, oov.flag, ...) {
+  oov <- out.of.vocab(oov.flag)
   perplexity.score <- perplexity(prob.vec, ...)
   avg.log.likelihood <- avg.log(prob.vec)
   avg.prob <- avg.prob(prob.vec)
   
-  score.list <- list("out.of.vocab" = oov, "perplexity" = perplexity.score
+  score.df <- data.frame("out.of.vocab" = oov, "perplexity" = perplexity.score
                      , "avg.log.likelihood" = avg.log.likelihood
                      , "avg.prob" = avg.prob)
-  return(score.list)
+  return(score.df)
 }
 
 
@@ -625,16 +632,15 @@ lang.scoring <- function(prob.vec, ...) {
 #----------------------------------------------
 
 perplexity <- function(prob.vec, cross.entropy = TRUE) {
-  # Remove NAs
-  prob <- na.omit(prob.vec)
+
   # Find the number of probabilities
-  n <- length(prob)
+  n <- length(prob.vec)
   # Calculate Perplexity
   if (cross.entropy == TRUE) {
-    cross.entropy <- -(1/n)*sum(log(prob, base = 2))
+    cross.entropy <- -(1/n)*sum(log(prob.vec, base = 2))
     perplexity <- 2^cross.entropy  
   } else {
-    entropy <- -sum(prob*log(prob, base = 2))
+    entropy <- -sum(prob.vec*log(prob.vec, base = 2))
     perplexity <- 2^entropy
   }
   return(perplexity)
@@ -646,14 +652,12 @@ perplexity <- function(prob.vec, cross.entropy = TRUE) {
 ## Output: Average log-likelihood
 #------------------------------------
 
-avg.log <- function(prob.vec){
-  
-  prob.vec <- replace(prob.vec,is.na(prob.vec),0)
-	log <- prob.vec*log(prob.vec,base=2)
-	sum.log <- sum(log,na.rm=T)
-	avg.log <- sum.log / length(prob.vec)
+avg.log <- function(prob.vec) {
+
+	log.likelihood <- prob.vec*log(prob.vec,base=2)
+	avg.log.likelihood <- mean(log.likelihood)
 	
-	return("Average Log-likelihood"=avg.log)
+	return("AvgLogLikelihood"=avg.log.likelihood)
 }
 
 #-----------------------------
@@ -662,8 +666,8 @@ avg.log <- function(prob.vec){
 ## Output: The rate of out-of-vocabularies in test input
 #------------------------------
 
-out.of.vocab <- function(prob.vec){  
-	return(sum(is.na(prob.vec))/length(prob.vec))
+out.of.vocab <- function(oov.flag){  
+	return(sum(oov.flag)/length(oov.flag))
 }
 
 #---------------------------------
@@ -684,9 +688,26 @@ avg.prob <- function(prob.vec){
 # Smoothing
 #______________________________________
 
+#-------------------
+# Smoother Wrapper Function
+# Input: markov.object
+#        type  - The desired type of smoothing
+# Output: markov.object - A smoothed markov object
+#-------------------
+
+smoother <- function(markov.object, type = c("laplace", "good.turing")) {
+  if (type == "laplace") {
+    markov.object <- laplace.smoother(markov.object)
+  }
+  if (type == "good.turing") {
+    markov.object <- gte.smoother(markov.object)
+  }
+  return(markov.object)
+}
+
 #-----------------------------------------------------
 # Laplace Smoother (Add-1 Smoothing)
-# Input: markov.object     - A markov object from the mm.generator() function
+# Input: markov.object    - A markov object from the mm.generator() function
 # Output: markov.object   - The same object as input, but with smoothed transition matrix
 #         unobserved.prob - The probability assigned to all state histories with 0 observations
 #------------------------------------------------------
@@ -710,4 +731,101 @@ laplace.smoother <- function(markov.object) {
   markov.object$unobserved.prob <- unobserved.prob
   
   return(markov.object)
+}
+
+#----------------------------
+# Good-Turing Method 
+# Input: markov.object    - A markov object from the mm.generator() function
+# Output: markov.object   - The same object as input, but with smoothed transition matrix
+#         unobserved.prob - The probability assigned to all state histories with 0 observations
+#--------------------------
+
+gte.smoother <- function(markov.object){
+  
+	freq <- markov.object$freq.matrix
+  
+  # Calculate the probability of unobserved data
+  total.observations <- sum(freq)
+  unobserved.prob <- 1 / total.observations
+  markov.object$unobserved.prob <- unobserved.prob
+  
+  # Good Turing Smoothing
+	n <- max(freq)
+	ns <- vector(length=n)
+	for (i in 0:n){
+	ns[i+1] <- sum(freq==i)
+	}
+	
+	for(i in 0:n){
+		freq[freq==i] <- (freq[freq==i]+1) * (ns[i+1]+1)/ns[i+1]
+	}
+	
+  # Write the smoothed frequency matrix to the markov object
+	markov.object$freq.matrix <- freq
+	
+  # Write the transition matrix to the markov object
+	row.totals <- apply(X=freq, MARGIN=1, FUN = sum)
+ 	markov.object$markov.matrix <- freq/ row.totals
+  
+	return(markov.object)
+}
+
+#_________________________________
+# Cross-Validation
+#________________________________
+
+
+#-----------------------------------------------------------
+# Sequential Cross Validation for Language Modeling
+# Cross validation that randomly selects a sequential set of training and test data
+# Input: corpus  - a corpus in a character vector with 1 state per element
+#        folds   - number of folds for cross validation
+#        order   
+#        frequency.matrix
+#        smooth
+#        unobserved.penalty.flag
+# Output: Scores - language model scores for each run
+# TODO: (1) As it stands this method creates 1 state history which is an error
+#         any time the training set wraps around the end of the corpus
+#--------------------------------------------------------------
+
+seq.cross.val <- function(corpus, folds, order, smooth = FALSE, type = c("laplace", "good.turing")) {
+  # Initialize data frame for scoring results
+  test.score.df <- NULL
+  
+  for (i in 1:folds) {
+  
+    # Train and test sets procedure
+    total.states <- length(corpus)
+    train.size <- floor(total.states - (total.states/folds))
+    # Select a start and end point
+    start.point <- sample(x = 1:total.states, size = 1)
+    end.point <- ifelse(start.point == 1
+                        , yes = total.states - (total.states/folds)
+                        , no = (start.point + train.size)%%total.states
+                        ) # Handle case where 1 is the starting point
+    # Construct the train and test set
+    if ((start.point + train.size) > total.states) { # Test to see if train set wraps around the end of corpus
+      train <- corpus[c(start.point:total.states, 1:(end.point-1))]
+      test <- corpus[end.point:(start.point-1)]
+    } else {
+      train <- corpus[start.point:end.point]
+      test <- corpus[c((end.point+1):total.states, 1:start.point)]
+    }
+    
+    # Make the markov model from training data
+    train.markov.object <- mm.generator(states.vec = train, order, frequency.matrix = TRUE)
+    # Implement a smoother if called for
+    if (smooth == TRUE) {
+      train.markov.object <- smoother(markov.object=train.markov.object, type)
+    } else { train.markov.object$unobserved.prob <- 1 / sum(train.markov.object$freq.matrix)} # Use the good-turing unobserved data estimate for models with no smoothing
+    # Find probabilities for the test set data based on the markov model
+    test.prob <- lang.model.prob(input.vec = test, markov.object = train.markov.object)
+    # Calculate scores
+    test.score.i <- lang.scoring(prob.vec = test.prob$Prob, oov.flag = test.prob$oov.flag)
+    # Store the results
+    test.score.df <- rbind(test.score.df, test.score.i)
+  }
+  
+  return(test.score.df)
 }

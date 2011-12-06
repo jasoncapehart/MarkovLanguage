@@ -26,8 +26,28 @@ avg.log(check$Prob)
 perplexity(check$Prob)
 
 
+# Smoothing Test
 
-# Smoother Test
-smoother.mm.2 <- laplace.smoother(markov.object = mm.object.2)
-check <- lang.model.prob(input.vec = hod[1:25], markov.object=smoother.mm.2, smooth=TRUE)
-lang.scoring(prob.vec = check$Prob, cross.entropy = TRUE)
+train <- c("This", "is", "a", "dog", "this", "is", "a", "cat", "which", "is", "a", "mammal")
+test <- c("This", "is", "a", "bug", "this", "is", "a", "cat", "which", "is", "a", "mammal")
+
+# Unsmoothed for comparsion
+mm1 <- mm.generator(states.vec = train, order = 1, frequency.matrix = FALSE)
+mm1.prob <- lang.model.prob(input.vec=test, markov.object = mm1)
+lang.scoring(mm1.prob$Prob, oov.flag = mm1.prob$oov.flag)
+
+# Laplace Smoothed
+mm1 <- mm.generator(states.vec = train, order = 1, frequency.matrix = TRUE)
+mm1.sm <- laplace.smoother(markov.object=mm1)
+mm1.prob.sm <- lang.model.prob(input.vec=test, markov.object = mm1.sm)
+lang.scoring(mm1.prob.sm$Prob, oov.flag = mm1.prob.sm$oov.flag)
+
+# Good Turing Smoothed
+mm1 <- mm.generator(states.vec = train, order = 1, frequency.matrix = TRUE)
+mm1.gte <- gte.smoother(markov.object=mm1)
+mm1.prob.gte <- lang.model.prob(input.vec=test, markov.object = mm1.gte)
+lang.scoring(mm1.prob.gte$Prob, oov.flag = mm1.prob.gte$oov.flag)
+
+# Smoothing Wrapper Test
+mm1.smoother <- smoother(markov.object=mm1, type="good.turing")
+mm1.smoother$markov.matrix

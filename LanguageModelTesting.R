@@ -16,11 +16,11 @@ simulate.text(mm.object.2, order = 2, nwords = 50, text.vector=hod)
 
 # Scoring Functionality
 
-check <- lang.model.prob(input.vec = hod[1:1000], markov.object=mm.object.1)
+check <- lang.model.prob(input.vec = test, markov.object=mm.object.1)
 # First order: 2.2 seconds for 1,000 words
 # Second order: 2.3 second for 1,000 words
 
-lang.scoring(prob.vec=check$Prob, cross.entropy = TRUE)
+lang.scoring(prob.df=check, cross.entropy = TRUE)
 out.of.vocab(check$Prob)
 avg.log(check$Prob)
 perplexity(check$Prob)

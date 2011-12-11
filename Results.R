@@ -12,9 +12,6 @@ mm.1 <- seq.cross.val(corpus=hod, folds=5, order = 1, smooth=FALSE)
 mm.1.laplace <- seq.cross.val(corpus=hod, folds=5, order = 1, smooth=TRUE, type="laplace")
 # 5.86 minutes
 
-mm.1.gt <- seq.cross.val(corpus=hod, folds=5, order = 1, smooth=TRUE, type="good.turing")
-# 34.1 minutes
-
 #----------
 # 2nd Order + 2nd Order Smoothed
 #----------
@@ -24,3 +21,20 @@ mm.2 <- seq.cross.val(corpus=hod, folds=5, order = 2, smooth = FALSE)
 
 mm.2.laplace <- seq.cross.val(corpus=hod, folds=5, order = 2, smooth=TRUE, type="laplace")
 # 7.96 minutes
+
+#----------
+# 2nd Order + 2nd Order Smoothed
+#----------
+mm.3 <- seq.cross.val(corpus=hod, folds=5, order = 3, smooth = FALSE)
+# 7.92 minutes
+
+
+
+#---------
+# Simulate text
+#---------
+sim.mm1 <- mm.generator(states.vec=hod, order = 1)
+simulate.text(mm.object=sim.mm1, order=1, nwords=10)
+
+sim.mm2 <- mm.generator(states.vec=hod, order = 2)
+simulate.text(mm.object=sim.mm2, order=2, nwords=12)

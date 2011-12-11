@@ -557,7 +557,7 @@ curtail <- function(sentence){
 #        markov.object - an object created by mm.generator()
 # Output: a data frame with the language model's probability for each sequence in the input text
 # Requires: tau, foreach
-# Calls: ngram()
+# Calls: ngram(), mm.generator()
 # TODO: Remove "unobserved.prob" step from language scoring functions
 #       and insert it into lang.model.prob() instead. That will allow
 #       an arbitrary penalty to be input without writing into the prob.df
@@ -571,29 +571,45 @@ lang.model.prob <- function(input.vec, markov.object) {
   # Check to make sure input.vec is a character vector
   stopifnot(is.character(input.vec))
   
+  # (1) Base prob.df
+  #---------------
   # Create the sequence of state histories and transitions to look up
   state.seq.df <- ngram(states.vec = input.vec, order = markov.object$order)
   # Find the name of the transition state
   trans.state.col.name <- paste("State", markov.object$order + 1, sep = '')
-  
   # Backoff Strategy Note: Leave entire state.seq.df to use with lower order markov model
   # Cut the unnecessary data out of the state.seq.df
   prob.df <- data.frame("History" = state.seq.df$History
                         , "TransState" = state.seq.df[trans.state.col.name])
   colnames(prob.df)[which(colnames(prob.df) == trans.state.col.name)] <- "TransState" #Rename the final state column name
   rm(state.seq.df) # Remove the state.seq.df entirely
-  
   # Merge the row and column numbers using the history.dim and trans.state.dim
   prob.df <- merge(x = prob.df, y = markov.object$history.dim
                , by.x = "History", by.y = "UniqueHistory", all.x = TRUE)
   prob.df <- merge(x = prob.df, y = markov.object$trans.states.dim
                , by.x = "TransState", by.y = "TransState", all.x = TRUE)
-  
   # Find the probability that corresponds to each history in the input.vec
   prob.vec <- unlist(foreach(i=1:dim(prob.df)[1]) %do% markov.object$markov.matrix[prob.df[i, "RowNum"], prob.df[i, "ColNum"]])
-  oov <- ifelse(is.na(prob.vec), yes = 1, no = 0) # Out of Vocabulary flag
-  prob.df <- data.frame(prob.df, "Prob" = prob.vec, "oov.flag" = oov)
   
+  # (2) Test probabilities for Perplexity calculation
+  #----------------------
+  # Count unique words in the test set
+  test.unigram <- textcnt(input.vec, split = NULL, method = "string", n = 1L, tolower = FALSE)
+  # Construct a test set probability data frame
+  test.prob.df <- data.frame("word" = names(test.unigram), "test.prob" = as.vector(test.unigram)/sum(test.unigram))
+  # Merge the results to prob.df
+  prob.df <- merge(x = prob.df, y = test.prob.df, by.x="TransState", by.y = "word", all.x=TRUE)
+  
+  # (3) Meta data on prob.df
+  #-------------------
+  # Calculate the Out of Vocabulary and Out of Ngram flags
+  oo.vocab <- ifelse(is.na(prob.df$ColNum), yes = 1, no = 0) # Out of Vocabulary flag
+  oo.ngram <- ifelse(is.na(prob.df$RowNum), yes = 1, no = 0) # Out of Ngram flag
+  # Add the prob.vec, oo.vocab, and oo.ngram to prob.df
+  prob.df <- data.frame(prob.df, "Prob" = prob.vec, "oo.vocab.flag" = oo.vocab, "oo.ngram.flag" = oo.ngram)
+  
+  # (4) Unobserved probability substitution
+  #-------------------
   # Replace unobserved state histories with probability specified by markov object
   prob.df[which(is.na(prob.df$Prob) | prob.df$Prob == 0), "Prob"] <- markov.object$unobserved.prob
   
@@ -611,13 +627,16 @@ lang.model.prob <- function(input.vec, markov.object) {
 #        avg.prob - average probability
 #-------------------------------------------------
 
-lang.scoring <- function(prob.vec, oov.flag, ...) {
-  oov <- out.of.vocab(oov.flag)
-  perplexity.score <- perplexity(prob.vec, ...)
-  avg.log.likelihood <- avg.log(prob.vec)
-  avg.prob <- avg.prob(prob.vec)
+lang.scoring <- function(prob.df, ...) {
+  oov <- out.of.vocab(oo.vocab.flag = prob.df$oo.vocab.flag)
+  oon <- out.of.ngram(oo.ngram.flag = prob.df$oo.ngram.flag)
+  perplexity.score <- perplexity(prob.vec = prob.df$Prob, ...)
+  avg.log.likelihood <- avg.log(prob.vec = prob.df$Prob)
+  avg.prob <- avg.prob(prob.vec = prob.df$Prob)
   
-  score.df <- data.frame("out.of.vocab" = oov, "perplexity" = perplexity.score
+  score.df <- data.frame("out.of.vocab" = oov
+                     ,"out.of.ngram" = oon
+                     , "perplexity" = perplexity.score
                      , "avg.log.likelihood" = avg.log.likelihood
                      , "avg.prob" = avg.prob)
   return(score.df)
@@ -632,13 +651,12 @@ lang.scoring <- function(prob.vec, oov.flag, ...) {
 #----------------------------------------------
 
 perplexity <- function(prob.vec, cross.entropy = TRUE) {
-
+  
   # Find the number of probabilities
   n <- length(prob.vec)
   # Calculate Perplexity
   if (cross.entropy == TRUE) {
-    cross.entropy <- -(1/n)*sum(log(prob.vec, base = 2))
-    perplexity <- 2^cross.entropy  
+    perplexity <- 2^(-sum(1/length(prob.vec)*log(prob.vec, base = 2)))
   } else {
     entropy <- -sum(prob.vec*log(prob.vec, base = 2))
     perplexity <- 2^entropy
@@ -654,21 +672,31 @@ perplexity <- function(prob.vec, cross.entropy = TRUE) {
 
 avg.log <- function(prob.vec) {
 
-	log.likelihood <- prob.vec*log(prob.vec,base=2)
-	avg.log.likelihood <- mean(log.likelihood)
+	avg.log.likelihood <- 1/length(prob.vec)*sum(log(prob.vec, 2))
 	
 	return("AvgLogLikelihood"=avg.log.likelihood)
 }
 
 #-----------------------------
 ## Out-of-Vocab rate
-## Input: prob.vec 
+## Input: oo.vocab.flag
 ## Output: The rate of out-of-vocabularies in test input
 #------------------------------
 
-out.of.vocab <- function(oov.flag){  
-	return(sum(oov.flag)/length(oov.flag))
+out.of.vocab <- function(oo.vocab.flag){  
+	return(sum(oo.vocab.flag)/length(oo.vocab.flag))
 }
+
+#-----------------------------
+## Out-of-Ngram rate
+## Input: oo.ngram.flag
+## Output: The rate of out-of-vocabularies in test input
+#------------------------------
+
+out.of.ngram <- function(oo.ngram.flag){  
+  return(sum(oo.ngram.flag)/length(oo.ngram.flag))
+}
+
 
 #---------------------------------
 # Average probability
@@ -678,8 +706,8 @@ out.of.vocab <- function(oov.flag){
 
 avg.prob <- function(prob.vec){
   
-  prob <- replace(prob.vec,is.na(prob.vec),0)
-	avg.prob <- mean(prob)
+  #prob <- replace(prob.vec,is.na(prob.vec),0)
+	avg.prob <- mean(prob.vec)
 	
 	return(avg.prob)
 }
@@ -795,7 +823,8 @@ seq.cross.val <- function(corpus, folds, order, smooth = FALSE, type = c("laplac
   
   for (i in 1:folds) {
   
-    # Train and test sets procedure
+    # Train and test set creation procedure
+    #---------------------------------
     total.states <- length(corpus)
     train.size <- floor(total.states - (total.states/folds))
     # Select a start and end point
@@ -813,6 +842,8 @@ seq.cross.val <- function(corpus, folds, order, smooth = FALSE, type = c("laplac
       test <- corpus[c((end.point+1):total.states, 1:start.point)]
     }
     
+    # Scoring
+    #----------------------------
     # Make the markov model from training data
     train.markov.object <- mm.generator(states.vec = train, order, frequency.matrix = TRUE)
     # Implement a smoother if called for
@@ -822,7 +853,7 @@ seq.cross.val <- function(corpus, folds, order, smooth = FALSE, type = c("laplac
     # Find probabilities for the test set data based on the markov model
     test.prob <- lang.model.prob(input.vec = test, markov.object = train.markov.object)
     # Calculate scores
-    test.score.i <- lang.scoring(prob.vec = test.prob$Prob, oov.flag = test.prob$oov.flag)
+    test.score.i <- lang.scoring(prob.df = test.prob)
     # Store the results
     test.score.df <- rbind(test.score.df, test.score.i)
   }
